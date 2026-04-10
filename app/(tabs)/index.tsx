@@ -1,98 +1,270 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useMutation } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
+import React from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { ImagePickerSlot } from '@/components/image-picker-slot';
+import { ShareModal } from '@/components/share-modal';
+import { createBattle } from '@/services/battleService';
+import { addCreatedBattleId } from '@/services/myBattleService';
+import { shareLink } from '@/services/shareService';
+import { useBattleStore } from '@/stores/battleStore';
+import type { Battle, PickedImage } from '@/types';
 
-export default function HomeScreen() {
+export default function CreateScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const setActiveBattle = useBattleStore((s) => s.setActiveBattle);
+
+  const [imageA, setImageA] = React.useState<PickedImage | null>(null);
+  const [imageB, setImageB] = React.useState<PickedImage | null>(null);
+  const [title, setTitle] = React.useState('');
+  const [shareModalVisible, setShareModalVisible] = React.useState(false);
+  const [createdBattle, setCreatedBattle] = React.useState<Battle | null>(null);
+
+  const canCreate = !!imageA && !!imageB;
+
+  const { mutate: handleCreate, isPending } = useMutation({
+    mutationFn: () =>
+      createBattle({
+        imageA: imageA!,
+        imageB: imageB!,
+        title: title.trim() || undefined,
+      }),
+    onSuccess: (battle) => {
+      void addCreatedBattleId(battle.id);
+      setActiveBattle(battle);
+      setCreatedBattle(battle);
+      setShareModalVisible(true);
+    },
+    onError: (err) => {
+      Alert.alert(
+        '문제가 생겼어요',
+        err instanceof Error ? err.message : '대결을 만들지 못했어요.',
+      );
+    },
+  });
+
+  async function handleShare(message: string) {
+    if (!createdBattle) return;
+    await shareLink(createdBattle.invite_token, message);
+  }
+
+  function handleDismissShareModal() {
+    setShareModalVisible(false);
+  }
+
+  function handleViewResult() {
+    if (!createdBattle) return;
+    setShareModalVisible(false);
+    router.push(`/result/${createdBattle.id}`);
+  }
+
+  function handleViewMyBattles() {
+    router.push('/my-battles');
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Text style={styles.eyebrow}>대결 만들기</Text>
+          <Text style={styles.appName}>PickOne</Text>
+          <Text style={styles.tagline}>사진 두 장을 올리고 친구들의 선택을 받아보세요.</Text>
+        </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        <View style={styles.imagesRow}>
+          <ImagePickerSlot
+            label="A"
+            uri={imageA?.previewUri ?? imageA?.uri ?? null}
+            onPick={setImageA}
+            disabled={isPending}
+          />
+          <View pointerEvents="none" style={styles.vsDivider}>
+            <Text style={styles.vsText}>VS</Text>
+          </View>
+          <ImagePickerSlot
+            label="B"
+            uri={imageB?.previewUri ?? imageB?.uri ?? null}
+            onPick={setImageB}
+            disabled={isPending}
+          />
+        </View>
+
+        <View style={styles.promptBlock}>
+          <Text style={styles.promptLabel}>질문 추가</Text>
+          <TextInput
+            style={styles.titleInput}
+            placeholder="예) 어떤 사진이 더 마음에 들어?"
+            placeholderTextColor="#9CA3AF"
+            value={title}
+            onChangeText={setTitle}
+            maxLength={60}
+            returnKeyType="done"
+            editable={!isPending}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={[styles.createButton, !canCreate && styles.createButtonDisabled]}
+          onPress={() => handleCreate()}
+          activeOpacity={0.88}
+          disabled={!canCreate || isPending}
+        >
+          {isPending ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text style={styles.createButtonText}>
+              {canCreate ? '대결 만들기' : '사진 먼저 선택하기'}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <Text style={styles.hint}>사진 두 장을 고르면 바로 공유 링크를 만들 수 있어요.</Text>
+
+        <TouchableOpacity
+          style={styles.myBattlesButton}
+          onPress={handleViewMyBattles}
+          activeOpacity={0.82}
+        >
+          <Text style={styles.myBattlesButtonText}>나의 대결 보기</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {createdBattle ? (
+        <ShareModal
+          visible={shareModalVisible}
+          token={createdBattle.invite_token}
+          onDismiss={handleDismissShareModal}
+          onViewResult={handleViewResult}
+          onShare={handleShare}
+        />
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  root: {
+    flex: 1,
+    backgroundColor: '#FFF',
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+    gap: 20,
+  },
+  header: {
+    paddingTop: 24,
+    gap: 6,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6366F1',
+  },
+  appName: {
+    fontSize: 30,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  tagline: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#6B7280',
+  },
+  imagesRow: {
+    position: 'relative',
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems: 'stretch',
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
+  vsDivider: {
     position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: 34,
+    height: 34,
+    marginLeft: -17,
+    marginTop: -17,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    zIndex: 2,
+    elevation: 2,
+  },
+  vsText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#9CA3AF',
+  },
+  promptBlock: {
+    gap: 8,
+  },
+  promptLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  titleInput: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: '#111827',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  createButton: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 8,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  createButtonDisabled: {
+    backgroundColor: '#E5E7EB',
+  },
+  createButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  hint: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  myBattlesButton: {
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+  },
+  myBattlesButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#4338CA',
   },
 });

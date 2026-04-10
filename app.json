@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "face-off",
-    "slug": "face-off",
+    "name": "pick-one",
+    "slug": "pick-one",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "faceoff",
+    "scheme": "pickone",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -43,6 +43,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "be6216c3-8991-48c2-aee0-d293995e717f"
+      }
+    },
+    "owner": "eunho_xiv"
   }
 }
