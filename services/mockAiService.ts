@@ -1,4 +1,4 @@
-import type { AiFeedback, BattleAiFeedback, ReasonSummary, VoteResult } from '@/types';
+import type { AiFeedback, BattleAiFeedback, DuelVoteResult, ReasonSummary, VoteResult } from '@/types';
 
 type Grade2 = 'good' | 'ok' | 'low';
 type Grade3 = 'good' | 'ok' | 'needs_improvement';
@@ -63,15 +63,15 @@ export async function analyzeBattleImages(
   };
 }
 
-export function generateFinalInsight(
-  voteResult: VoteResult,
+function buildDuelInsight(
+  voteResult: DuelVoteResult,
   reasonSummary: ReasonSummary | null,
   aiFeedback: BattleAiFeedback | null,
 ): string {
   const { a_percent, b_percent, total } = voteResult;
 
   if (total === 0) {
-    return '아직 투표 결과가 없어요. 친구에게 공유해서 반응을 모아보세요.';
+    return '아직 투표 결과가 없어요. 링크를 공유해서 반응을 모아보세요.';
   }
 
   const leader = a_percent >= b_percent ? 'A' : 'B';
@@ -80,53 +80,62 @@ export function generateFinalInsight(
   const diff = Math.abs(a_percent - b_percent);
 
   if (diff <= 10) {
-    const aiNote =
-      leaderFeedback && leaderFeedback.profile_suitability === 'high'
-        ? `${leader} 사진은 프로필 적합도가 높다는 분석도 있어요.`
-        : '';
-    return `두 사진 모두 비슷한 반응을 받고 있어요. ${aiNote}`.trim();
+    return '두 사진 모두 비슷한 반응을 받고 있어요.';
   }
 
   const humanPart =
     leaderReasons && leaderReasons.topReasons.length > 0
-      ? `'${leaderReasons.topReasons
-          .slice(0, 1)
-          .map((k) => {
-            const labels: Record<string, string> = {
-              natural: '자연스러움',
-              bright_clear: '밝고 선명함',
-              balanced_lighting: '고른 조명',
-              comfortable_expression: '편안한 표정',
-              better_eye_contact: '안정적인 시선 처리',
-              clear_background: '깔끔한 배경',
-              good_mood: '좋은 분위기',
-              confident_vibe: '자신감 있는 분위기',
-              profile_fit: '프로필 적합도',
-              general_use_fit: '다른 용도 활용도',
-              clean_impression: '깔끔한 인상',
-              friendly_impression: '친근한 인상',
-              stable_composition: '안정적인 구도',
-            };
-            return labels[k] ?? k;
-          })
-          .join(', ')}' 측면에서`
+      ? `사람들이 '${reasonLabelMap[leaderReasons.topReasons[0]] ?? leaderReasons.topReasons[0]}' 이유를 자주 언급했어요.`
       : '';
 
   const aiPart =
     leaderFeedback
       ? leaderFeedback.sharpness === 'good'
-        ? '선명도가 좋고'
+        ? '선명도가 좋아요.'
         : leaderFeedback.brightness === 'good'
-          ? '밝기가 적절하고'
+          ? '밝기가 안정적이라 눈에 잘 들어와요.'
           : ''
       : '';
 
   const parts = [humanPart, aiPart].filter(Boolean).join(' ');
-  const connector = parts ? `${parts} ` : '';
-
   if (diff >= 25) {
-    return `투표 결과와 사진 피드백을 종합하면 ${leader} 사진이 ${connector}더 적합하다는 의견이 많아요.`;
+    return `${leader} 사진이 뚜렷하게 앞서고 있어요. ${parts}`.trim();
   }
 
-  return `${leader} 사진이 ${connector}조금 더 선호되는 경향이에요. 참고해서 선택해 보세요.`;
+  return `${leader} 사진이 조금 더 앞서고 있어요. ${parts}`.trim();
 }
+
+export function generateFinalInsight(
+  voteResult: VoteResult,
+  reasonSummary: ReasonSummary | null,
+  aiFeedback: BattleAiFeedback | null,
+): string {
+  if (voteResult.mode === 'single_reaction') {
+    if (voteResult.total === 0) {
+      return '아직 반응이 없어요. 링크를 공유해서 반응을 모아보세요.';
+    }
+    if (voteResult.like_count === voteResult.dislike_count) {
+      return '좋아요와 싫어요가 현재 동률이에요.';
+    }
+    return voteResult.like_count > voteResult.dislike_count
+      ? '이 사진은 좋아요가 더 많아요.'
+      : '이 사진은 싫어요가 더 많아요.';
+  }
+
+  return buildDuelInsight(voteResult, reasonSummary, aiFeedback);
+}
+  const reasonLabelMap: Record<string, string> = {
+    natural: '자연스러움',
+    bright_clear: '밝고 선명함',
+    balanced_lighting: '고른 조명',
+    comfortable_expression: '편안한 표정',
+    better_eye_contact: '시선 처리',
+    clear_background: '깔끔한 배경',
+    good_mood: '좋은 분위기',
+    confident_vibe: '자신감 있는 느낌',
+    profile_fit: '프로필 적합도',
+    general_use_fit: '활용도',
+    clean_impression: '깔끔한 인상',
+    friendly_impression: '친근한 인상',
+    stable_composition: '안정적인 구도',
+  };

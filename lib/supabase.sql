@@ -4,6 +4,49 @@
 -- Enable UUID extension (usually already enabled)
 create extension if not exists "pgcrypto";
 
+-- anonymous users table (non-login identity)
+create table if not exists anonymous_users (
+  id         uuid        primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  client_key text        unique not null
+);
+
+create index if not exists anonymous_users_client_key_idx on anonymous_users (client_key);
+
+alter table anonymous_users enable row level security;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'anonymous_users'
+      and policyname = 'Anon select anonymous users'
+  ) then
+    create policy "Anon select anonymous users" on anonymous_users
+      for select using (true);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'anonymous_users'
+      and policyname = 'Anon insert anonymous users'
+  ) then
+    create policy "Anon insert anonymous users" on anonymous_users
+      for insert with check (true);
+  end if;
+end
+$$;
+
+grant select, insert on table anonymous_users to anon, authenticated;
+
 -- battles table
 create table if not exists battles (
   id            uuid        primary key default gen_random_uuid(),

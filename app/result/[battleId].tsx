@@ -23,7 +23,7 @@ import { getBattleComments } from '@/services/commentService';
 import { analyzeBattleImages, generateFinalInsight } from '@/services/mockAiService';
 import { getReasonSummary } from '@/services/reasonService';
 import { getVoteResults, hasAlreadyVoted } from '@/services/voteService';
-import type { BattleAiFeedback, Choice, ReasonSummary, VoteComment } from '@/types';
+import type { BattleAiFeedback, Choice, Reaction, ReasonSummary, VoteComment } from '@/types';
 
 const ENABLE_AI_ANALYSIS = false;
 const APP_DEEPLINK_URL = 'pickone://';
@@ -33,9 +33,10 @@ const APP_FALLBACK_URL =
   'https://pickone.app';
 
 export default function ResultScreen() {
-  const { battleId, choice, alreadyVoted, token } = useLocalSearchParams<{
+  const { battleId, choice, reaction, alreadyVoted, token } = useLocalSearchParams<{
     battleId: string;
     choice?: string;
+    reaction?: string;
     alreadyVoted?: string;
     token?: string;
   }>();
@@ -44,25 +45,36 @@ export default function ResultScreen() {
   const fadeIn = React.useRef(new Animated.Value(0)).current;
 
   const userChoice = (choice as Choice) ?? null;
+  const userReaction = (reaction as Reaction) ?? null;
   const [aiFeedback, setAiFeedback] = React.useState<BattleAiFeedback | null>(null);
 
-  const { data: battle, isLoading: battleLoading } = useQuery({
+  const { data: battle, isLoading: battleLoading, isError: isBattleError } = useQuery({
     queryKey: ['battle', battleId],
     queryFn: () => getBattle(battleId!),
     enabled: !!battleId,
   });
 
-  const { data: result, isLoading: resultLoading } = useQuery({
-    queryKey: ['result', battleId],
-    queryFn: () => getVoteResults(battleId!),
-    enabled: !!battleId,
+  const { data: result, isLoading: resultLoading, isError: isResultError } = useQuery({
+    queryKey: ['result', battleId, battle?.mode],
+    queryFn: () => getVoteResults(battleId!, battle?.mode ?? 'duel'),
+    enabled: !!battleId && !!battle,
     refetchInterval: 10_000,
   });
 
   const { data: reasonSummary } = useQuery<ReasonSummary>({
-    queryKey: ['reasons', battleId, result?.a_percent, result?.b_percent],
-    queryFn: () => getReasonSummary(battleId!, result!.a_percent, result!.b_percent),
-    enabled: !!battleId && !!result,
+    queryKey: [
+      'reasons',
+      battleId,
+      result && result.mode === 'duel' ? result.a_percent : null,
+      result && result.mode === 'duel' ? result.b_percent : null,
+    ],
+    queryFn: () => {
+      if (!result || result.mode !== 'duel') {
+        throw new Error('이유 요약은 듀얼 모드에서만 사용할 수 있어요.');
+      }
+      return getReasonSummary(battleId!, result.a_percent, result.b_percent);
+    },
+    enabled: !!battleId && result?.mode === 'duel',
     staleTime: 1000 * 30,
   });
 
@@ -88,7 +100,7 @@ export default function ResultScreen() {
   });
 
   React.useEffect(() => {
-    if (!ENABLE_AI_ANALYSIS || !battle || aiFeedback) return;
+    if (!ENABLE_AI_ANALYSIS || !battle || aiFeedback || battle.mode !== 'duel') return;
     analyzeBattleImages(battle.image_a_url, battle.image_b_url).then(setAiFeedback);
   }, [aiFeedback, battle]);
 
@@ -126,33 +138,56 @@ export default function ResultScreen() {
     router.push('/');
   }
 
-  if (battleLoading || resultLoading || !battle || !result) {
+  function handleExit() {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.push('/my-battles');
+  }
+
+  function handleGoMyBattles() {
+    router.push('/my-battles');
+  }
+
+  if (battleLoading || resultLoading) {
     return <SkeletonLoader />;
   }
 
+  if (isBattleError || isResultError || !battle || !result) {
+    return (
+      <View style={[styles.root, styles.errorState, { paddingTop: insets.top }]}>
+        <Text style={styles.errorStateTitle}>결과를 불러오지 못했어요</Text>
+        <Text style={styles.errorStateBody}>잠시 후 다시 시도해 주세요.</Text>
+        <TouchableOpacity style={styles.errorStateButton} activeOpacity={0.86} onPress={handleGoMyBattles}>
+          <Text style={styles.errorStateButtonText}>나의 대결 보기</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   const hasVotes = result.total > 0;
+  const isDuel = result.mode === 'duel';
   const winnerChoice: Choice | null =
-    !hasVotes || result.a_count === result.b_count
+    !isDuel || !hasVotes || result.a_count === result.b_count
       ? null
       : result.a_count > result.b_count
         ? 'A'
         : 'B';
 
   const finalInsight =
-    reasonSummary || (ENABLE_AI_ANALYSIS && aiFeedback)
+    isDuel && (reasonSummary || (ENABLE_AI_ANALYSIS && aiFeedback))
       ? generateFinalInsight(result, reasonSummary ?? null, ENABLE_AI_ANALYSIS ? aiFeedback : null)
       : null;
 
-  const showCta = Boolean(choice || alreadyVoted);
+  const showCta = Boolean(choice || reaction || alreadyVoted);
 
   return (
     <Animated.View style={[styles.root, { paddingTop: insets.top, opacity: fadeIn }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.eyebrow}>결과</Text>
-          <Text style={styles.title}>
-            {alreadyVoted ? '이미 참여한 대결이에요' : '투표가 반영됐어요'}
-          </Text>
+          <Text style={styles.title}>{alreadyVoted ? '이미 참여한 대결이에요' : '투표가 반영됐어요'}</Text>
           <Text style={styles.subtitle}>
             지금까지 <Text style={styles.highlight}>{result.total}명</Text>이 참여했어요
           </Text>
@@ -160,84 +195,83 @@ export default function ResultScreen() {
 
         {battle.title ? <Text style={styles.question}>{battle.title}</Text> : null}
 
-        <View style={styles.imagesRow}>
-          <View
-            style={[
-              styles.imageWrapper,
-              winnerChoice === 'A' ? styles.winnerWrapper : null,
-              hasVotes && winnerChoice !== 'A' ? styles.loserWrapper : null,
-            ]}
-          >
-            <Image
-              source={{ uri: battle.image_a_url }}
-              style={styles.image}
-              contentFit="cover"
-              transition={200}
-            />
-            <View style={styles.cornerBadge}>
-              <Text style={styles.cornerBadgeText}>A</Text>
-            </View>
-            {winnerChoice === 'A' ? (
-              <View style={styles.winnerBadge}>
-                <Text style={styles.winnerBadgeText}>더 많이 선택됐어요</Text>
+        {isDuel ? (
+          <View style={styles.imagesRow}>
+            <View
+              style={[
+                styles.imageWrapper,
+                winnerChoice === 'A' ? styles.winnerWrapper : null,
+                hasVotes && winnerChoice !== 'A' ? styles.loserWrapper : null,
+              ]}
+            >
+              <Image source={{ uri: battle.image_a_url }} style={styles.image} contentFit="cover" transition={200} />
+              <View style={styles.cornerBadge}>
+                <Text style={styles.cornerBadgeText}>A</Text>
               </View>
-            ) : null}
-            {userChoice === 'A' ? (
+              {winnerChoice === 'A' ? (
+                <View style={styles.winnerBadge}>
+                  <Text style={styles.winnerBadgeText}>우세</Text>
+                </View>
+              ) : null}
+              {userChoice === 'A' ? (
+                <View style={styles.voteBadge}>
+                  <Text style={styles.voteBadgeText}>내 선택</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View
+              style={[
+                styles.imageWrapper,
+                winnerChoice === 'B' ? styles.winnerWrapper : null,
+                hasVotes && winnerChoice !== 'B' ? styles.loserWrapper : null,
+              ]}
+            >
+              <Image source={{ uri: battle.image_b_url }} style={styles.image} contentFit="cover" transition={200} />
+              <View style={styles.cornerBadge}>
+                <Text style={styles.cornerBadgeText}>B</Text>
+              </View>
+              {winnerChoice === 'B' ? (
+                <View style={styles.winnerBadge}>
+                  <Text style={styles.winnerBadgeText}>우세</Text>
+                </View>
+              ) : null}
+              {userChoice === 'B' ? (
+                <View style={styles.voteBadge}>
+                  <Text style={styles.voteBadgeText}>내 선택</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.singleImageWrapper}>
+            <Image source={{ uri: battle.image_a_url }} style={styles.singleImage} contentFit="cover" transition={200} />
+            <View style={styles.cornerBadge}>
+              <Text style={styles.cornerBadgeText}>사진</Text>
+            </View>
+            {userReaction ? (
               <View style={styles.voteBadge}>
-                <Text style={styles.voteBadgeText}>내 선택</Text>
+                <Text style={styles.voteBadgeText}>{userReaction === 'LIKE' ? '좋아요' : '싫어요'}</Text>
               </View>
             ) : null}
           </View>
+        )}
 
-          <View
-            style={[
-              styles.imageWrapper,
-              winnerChoice === 'B' ? styles.winnerWrapper : null,
-              hasVotes && winnerChoice !== 'B' ? styles.loserWrapper : null,
-            ]}
-          >
-            <Image
-              source={{ uri: battle.image_b_url }}
-              style={styles.image}
-              contentFit="cover"
-              transition={200}
-            />
-            <View style={styles.cornerBadge}>
-              <Text style={styles.cornerBadgeText}>B</Text>
-            </View>
-            {winnerChoice === 'B' ? (
-              <View style={styles.winnerBadge}>
-                <Text style={styles.winnerBadgeText}>더 많이 선택됐어요</Text>
-              </View>
-            ) : null}
-            {userChoice === 'B' ? (
-              <View style={styles.voteBadge}>
-                <Text style={styles.voteBadgeText}>내 선택</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
+        {!hasVotes ? <Text style={styles.emptyStateText}>아직 투표가 없어요. 링크를 공유해 반응을 모아보세요.</Text> : null}
 
-        {!hasVotes ? (
-          <Text style={styles.emptyStateText}>
-            아직 첫 투표가 없어요. 친구에게 공유해서 반응을 모아보세요.
-          </Text>
-        ) : null}
+        <VoteResult result={result} userChoice={userChoice} userReaction={userReaction} />
 
-        <VoteResult result={result} userChoice={userChoice} />
-
-        {reasonSummary ? <HumanFeedbackSummaryCard summary={reasonSummary} /> : null}
-        {ENABLE_AI_ANALYSIS && aiFeedback ? <AiFeedbackCard feedback={aiFeedback} /> : null}
-
-        {finalInsight ? (
+        {isDuel && reasonSummary ? <HumanFeedbackSummaryCard summary={reasonSummary} /> : null}
+        {isDuel && ENABLE_AI_ANALYSIS && aiFeedback ? <AiFeedbackCard feedback={aiFeedback} /> : null}
+        {isDuel && finalInsight ? (
           <FinalInsightCard insight={finalInsight} recommendedSlot={winnerChoice} />
         ) : null}
 
         {canViewComments ? (
           <View style={styles.commentSection}>
-            <Text style={styles.commentTitle}>한 줄 코멘트</Text>
+            <Text style={styles.commentTitle}>최근 코멘트</Text>
             {comments.length === 0 ? (
-              <Text style={styles.commentEmpty}>아직 등록된 코멘트가 없어요.</Text>
+              <Text style={styles.commentEmpty}>아직 코멘트가 없어요.</Text>
             ) : (
               comments.map((comment) => (
                 <View key={comment.id} style={styles.commentItem}>
@@ -251,14 +285,25 @@ export default function ResultScreen() {
         {showCta ? (
           <View style={styles.ctaSection}>
             <Text style={styles.ctaTitle}>나도 친구들의 선택 받아보기</Text>
-            <Text style={styles.ctaBody}>
-              사진 두 장만 고르면 바로 공유 링크를 만들 수 있어요.
-            </Text>
+            <Text style={styles.ctaBody}>사진 1장 또는 A/B 대결을 만들고 바로 공유해 보세요.</Text>
             <TouchableOpacity activeOpacity={0.86} onPress={handleCreateOwn} style={styles.ctaButton}>
-              <Text style={styles.ctaButtonText}>내 사진으로 대결 만들기</Text>
+              <Text style={styles.ctaButtonText}>대결 만들기</Text>
             </TouchableOpacity>
           </View>
         ) : null}
+
+        <View style={styles.exitRow}>
+          <TouchableOpacity activeOpacity={0.86} onPress={handleExit} style={styles.exitSecondaryButton}>
+            <Text style={styles.exitSecondaryText}>뒤로 가기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.86}
+            onPress={handleGoMyBattles}
+            style={styles.exitPrimaryButton}
+          >
+            <Text style={styles.exitPrimaryText}>나의 대결 보기</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </Animated.View>
   );
@@ -318,6 +363,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+  singleImageWrapper: {
+    height: 280,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  singleImage: {
+    width: '100%',
+    height: '100%',
   },
   winnerWrapper: {
     borderWidth: 2,
@@ -443,5 +500,68 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#FFF',
+  },
+  exitRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  exitSecondaryButton: {
+    flex: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+  },
+  exitSecondaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  exitPrimaryButton: {
+    flex: 1,
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 13,
+  },
+  exitPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  errorState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    gap: 10,
+  },
+  errorStateTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  errorStateBody: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  errorStateButton: {
+    marginTop: 4,
+    borderRadius: 8,
+    backgroundColor: '#111827',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  errorStateButtonText: {
+    color: '#FFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

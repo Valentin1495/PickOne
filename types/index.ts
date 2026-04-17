@@ -1,4 +1,6 @@
 export type Choice = 'A' | 'B';
+export type BattleMode = 'duel' | 'single_reaction';
+export type Reaction = 'LIKE' | 'DISLIKE';
 
 export interface Battle {
   id: string;
@@ -8,6 +10,7 @@ export interface Battle {
   invite_token: string;
   image_a_url: string;
   image_b_url: string;
+  mode: BattleMode;
   is_active: boolean;
 }
 
@@ -15,13 +18,15 @@ export interface Vote {
   id: string;
   created_at: string;
   battle_id: string;
-  choice: Choice;
+  choice: Choice | null;
+  reaction: Reaction | null;
   voter_user_id: string | null;
   voter_fingerprint: string;
   invite_token: string | null;
 }
 
-export interface VoteResult {
+export interface DuelVoteResult {
+  mode: 'duel';
   total: number;
   a_count: number;
   b_count: number;
@@ -29,9 +34,25 @@ export interface VoteResult {
   b_percent: number;
 }
 
-export interface VoteResultByBattleId extends VoteResult {
+export interface SingleReactionVoteResult {
+  mode: 'single_reaction';
+  total: number;
+  like_count: number;
+  dislike_count: number;
+  like_percent: number;
+  dislike_percent: number;
+}
+
+export type VoteResult = DuelVoteResult | SingleReactionVoteResult;
+
+export interface VoteResultByBattleId {
   battle_id: string;
   winner_choice: Choice | null;
+  total: number;
+  a_count: number;
+  b_count: number;
+  a_percent: number;
+  b_percent: number;
 }
 
 export interface PickedImage {
@@ -44,16 +65,28 @@ export interface PickedImage {
 export interface CreateBattleInput {
   title?: string;
   imageA: PickedImage;
-  imageB: PickedImage;
+  imageB?: PickedImage;
+  mode?: BattleMode;
   creatorUserId?: string;
 }
 
-export interface SubmitVoteInput {
+export interface SubmitDuelVoteInput {
   battleId: string;
-  choice: Choice;
   inviteToken: string;
   voterUserId?: string;
+  mode: 'duel';
+  choice: Choice;
 }
+
+export interface SubmitReactionVoteInput {
+  battleId: string;
+  inviteToken: string;
+  voterUserId?: string;
+  mode: 'single_reaction';
+  reaction: Reaction;
+}
+
+export type SubmitVoteInput = SubmitDuelVoteInput | SubmitReactionVoteInput;
 
 export interface AiAnalysis {
   brightness: number;

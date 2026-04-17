@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
-import { Animated, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SkeletonLoader } from '@/components/skeleton-loader';
@@ -12,7 +12,7 @@ import { getBattleByToken } from '@/services/battleService';
 import { submitVoteComment } from '@/services/commentService';
 import { submitVoteReasons } from '@/services/reasonService';
 import { hasAlreadyVoted, submitVote } from '@/services/voteService';
-import type { Choice } from '@/types';
+import type { Choice, Reaction, SubmitVoteInput } from '@/types';
 
 const WEB_FONT = Platform.select({
   web: "'Pretendard Variable', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif",
@@ -67,7 +67,9 @@ export default function WebVotePage() {
   React.useEffect(() => {
     if (!battle) return;
     void Image.prefetch(battle.image_a_url);
-    void Image.prefetch(battle.image_b_url);
+    if (battle.mode === 'duel') {
+      void Image.prefetch(battle.image_b_url);
+    }
   }, [battle]);
 
   React.useEffect(() => {
@@ -189,16 +191,11 @@ export default function WebVotePage() {
   }, []);
 
   const { mutateAsync: submitVoteAsync, isPending: isFinalizing } = useMutation({
-    mutationFn: (choice: Choice) =>
-      submitVote({
-        battleId: battle!.id,
-        choice,
-        inviteToken: token!,
-      }),
+    mutationFn: (input: SubmitVoteInput) => submitVote(input),
   });
 
   function handleTap(choice: Choice) {
-    if (isFinalizing) return;
+    if (isFinalizing || battle?.mode !== 'duel') return;
 
     setSubmitError(null);
     setSelectedChoice(choice);
@@ -212,18 +209,47 @@ export default function WebVotePage() {
     ]).start();
   }
 
-  async function handleReasonSubmit(value: VoteReasonFormValue) {
-    if (!battle || !selectedChoice || !token) return;
+  async function submitSingleReaction(reaction: Reaction) {
+    if (!battle || !token || battle.mode !== 'single_reaction') return;
+    if (isFinalizing) return;
 
     setSubmitError(null);
 
     try {
-      const vote = await submitVoteAsync(selectedChoice);
+      await submitVoteAsync({
+        battleId: battle.id,
+        inviteToken: token,
+        mode: 'single_reaction',
+        reaction,
+      });
+
+      router.replace(`/result/${battle.id}?reaction=${reaction}&token=${token}`);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ALREADY_VOTED') {
+        router.replace(`/result/${battle.id}?alreadyVoted=1&token=${token}`);
+        return;
+      }
+      setSubmitError('네트워크가 불안정해요. 다시 시도해 주세요.');
+    }
+  }
+
+  async function handleReasonSubmit(value: VoteReasonFormValue) {
+    if (!battle || !selectedChoice || !token || battle.mode !== 'duel') return;
+
+    setSubmitError(null);
+
+    try {
+      const vote = await submitVoteAsync({
+        battleId: battle.id,
+        choice: selectedChoice,
+        inviteToken: token,
+        mode: 'duel',
+      });
 
       try {
         await submitVoteReasons(vote.id, battle.id, selectedChoice, value.reasons);
       } catch {
-        // 이유 저장 실패여도 투표 플로우는 유지
+        // 이유 저장 실패와 무관하게 투표는 성공 처리
       }
 
       try {
@@ -234,7 +260,7 @@ export default function WebVotePage() {
           inviteToken: token,
         });
       } catch (error) {
-        setSubmitError(error instanceof Error ? error.message : '댓글 저장에 실패했어요.');
+        setSubmitError(error instanceof Error ? error.message : '코멘트 저장에 실패했어요.');
         return;
       }
 
@@ -283,9 +309,7 @@ export default function WebVotePage() {
     : Math.max(insets.top + 12, Platform.OS === 'ios' ? 30 : 20);
 
   const keyboardBottomInset = keyboardLikelyOpen ? Math.max(2, Math.min(6, insets.bottom)) : 0;
-  const bottomPadding = keyboardLikelyOpen
-    ? keyboardBottomInset
-    : Math.max(insets.bottom + 12, 16);
+  const bottomPadding = keyboardLikelyOpen ? keyboardBottomInset : Math.max(insets.bottom + 12, 16);
   const keyboardDockGap = keyboardLikelyOpen
     ? Math.max(4, Math.min(8, Math.round(keyboardInset * 0.02)))
     : 0;
@@ -339,54 +363,85 @@ export default function WebVotePage() {
         >
           {!hideTopSection ? (
             <View style={styles.topSection}>
-              <Text
-                style={[styles.question, WEB_FONT ? { fontFamily: WEB_FONT } : null]}
-                numberOfLines={2}
-              >
-                {battle.title ?? '어떤 사진이 더 마음에 들어요?'}
+              <Text style={[styles.question, WEB_FONT ? { fontFamily: WEB_FONT } : null]} numberOfLines={2}>
+                {battle.title ?? '이 사진이 어떤가요?'}
               </Text>
               <View style={styles.hintChip}>
                 <Text style={[styles.hintText, WEB_FONT ? { fontFamily: WEB_FONT } : null]}>
-                  터치해서 투표 👇
+                  {battle.mode === 'duel' ? '터치해서 투표' : '좋아요/싫어요를 눌러주세요'}
                 </Text>
               </View>
             </View>
           ) : null}
 
-          <View
-            style={[
-              styles.imagesRow,
-              {
-                gap: isCompact ? 8 : 12,
-                ...imagesRowSizeStyle,
-              },
-            ]}
-          >
-            <WebVoteChoiceCard
-              slot="A"
-              imageUri={battle.image_a_url}
-              selected={selectedChoice === 'A'}
-              disabled={isFinalizing}
-              scale={scaleA}
-              onPress={() => handleTap('A')}
-            />
-            <WebVoteChoiceCard
-              slot="B"
-              imageUri={battle.image_b_url}
-              selected={selectedChoice === 'B'}
-              disabled={isFinalizing}
-              scale={scaleB}
-              onPress={() => handleTap('B')}
-            />
-          </View>
+          {battle.mode === 'duel' ? (
+            <View
+              style={[
+                styles.imagesRow,
+                {
+                  gap: isCompact ? 8 : 12,
+                  ...imagesRowSizeStyle,
+                },
+              ]}
+            >
+              <WebVoteChoiceCard
+                slot="A"
+                imageUri={battle.image_a_url}
+                selected={selectedChoice === 'A'}
+                disabled={isFinalizing}
+                scale={scaleA}
+                onPress={() => handleTap('A')}
+              />
+              <WebVoteChoiceCard
+                slot="B"
+                imageUri={battle.image_b_url}
+                selected={selectedChoice === 'B'}
+                disabled={isFinalizing}
+                scale={scaleB}
+                onPress={() => handleTap('B')}
+              />
+            </View>
+          ) : (
+            <View style={[styles.singleImageStage, imagesRowSizeStyle]}>
+              <WebVoteChoiceCard
+                slot="A"
+                imageUri={battle.image_a_url}
+                selected={false}
+                disabled
+                scale={scaleA}
+                onPress={() => null}
+              />
+            </View>
+          )}
 
-          {showReasonPicker && selectedChoice ? (
+          {battle.mode === 'duel' && showReasonPicker && selectedChoice ? (
             <VoteReasonPicker
               submitting={isFinalizing}
               onSubmit={handleReasonSubmit}
               onCommentFocusChange={setIsCommentFocused}
               compact={useCompactReasonPicker}
             />
+          ) : null}
+
+          {battle.mode === 'single_reaction' ? (
+            <View style={styles.reactionRow}>
+              <TouchableOpacity
+                style={[styles.reactionButton, styles.likeButton]}
+                activeOpacity={0.88}
+                onPress={() => submitSingleReaction('LIKE')}
+                disabled={isFinalizing}
+              >
+                <Text style={styles.reactionButtonText}>좋아요</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reactionButton, styles.dislikeButton]}
+                activeOpacity={0.88}
+                onPress={() => submitSingleReaction('DISLIKE')}
+                disabled={isFinalizing}
+              >
+                <Text style={styles.reactionButtonText}>싫어요</Text>
+              </TouchableOpacity>
+            </View>
           ) : null}
 
           <View style={[styles.footer, keyboardLikelyOpen ? styles.footerCompact : null]}>
@@ -445,6 +500,30 @@ const styles = StyleSheet.create({
   imagesRow: {
     flexDirection: 'row',
     paddingHorizontal: 2,
+  },
+  singleImageStage: {
+    paddingHorizontal: 2,
+  },
+  reactionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  reactionButton: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  likeButton: {
+    backgroundColor: '#166534',
+  },
+  dislikeButton: {
+    backgroundColor: '#991B1B',
+  },
+  reactionButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFF',
   },
   footer: {
     minHeight: 24,

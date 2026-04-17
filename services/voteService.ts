@@ -1,6 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
-import type { SubmitVoteInput, Vote, VoteResult, VoteResultByBattleId } from '@/types';
+import { getOrCreateAnonymousUserId } from '@/services/identityService';
+import type {
+  BattleMode,
+  DuelVoteResult,
+  SingleReactionVoteResult,
+  SubmitVoteInput,
+  Vote,
+  VoteResult,
+  VoteResultByBattleId,
+} from '@/types';
 
 const FINGERPRINT_KEY = 'pickone_voter_fingerprint';
 
@@ -40,13 +49,18 @@ export async function hasAlreadyVoted(battleId: string): Promise<boolean> {
 
 export async function submitVote(input: SubmitVoteInput): Promise<Vote> {
   const fingerprint = await getOrCreateFingerprint();
+  const voterUserId = input.voterUserId ?? (await getOrCreateAnonymousUserId());
+  const isSingleReaction = input.mode === 'single_reaction';
+  const choice =
+    input.mode === 'duel' ? input.choice : input.reaction === 'LIKE' ? 'A' : 'B';
 
   const { data, error } = await supabase
     .from('votes')
     .insert({
       battle_id: input.battleId,
-      choice: input.choice,
-      voter_user_id: input.voterUserId ?? null,
+      choice,
+      reaction: isSingleReaction ? input.reaction : null,
+      voter_user_id: voterUserId,
       voter_fingerprint: fingerprint,
       invite_token: input.inviteToken,
     })
@@ -65,9 +79,10 @@ export async function submitVote(input: SubmitVoteInput): Promise<Vote> {
   return data as Vote;
 }
 
-function calculateVoteResult(aCount: number, bCount: number): VoteResult {
+function calculateVoteResult(aCount: number, bCount: number): DuelVoteResult {
   const total = aCount + bCount;
   return {
+    mode: 'duel',
     total,
     a_count: aCount,
     b_count: bCount,
@@ -76,18 +91,38 @@ function calculateVoteResult(aCount: number, bCount: number): VoteResult {
   };
 }
 
-export async function getVoteResults(battleId: string): Promise<VoteResult> {
+function calculateSingleReactionResult(
+  likeCount: number,
+  dislikeCount: number
+): SingleReactionVoteResult {
+  const total = likeCount + dislikeCount;
+  return {
+    mode: 'single_reaction',
+    total,
+    like_count: likeCount,
+    dislike_count: dislikeCount,
+    like_percent: total > 0 ? Math.round((likeCount / total) * 100) : 0,
+    dislike_percent: total > 0 ? Math.round((dislikeCount / total) * 100) : 0,
+  };
+}
+
+export async function getVoteResults(battleId: string, mode: BattleMode = 'duel'): Promise<VoteResult> {
   const { data, error } = await supabase
     .from('votes')
-    .select('choice')
+    .select('choice, reaction')
     .eq('battle_id', battleId);
 
   if (error) throw new Error(`Failed to get results: ${error.message}`);
 
   const votes = data ?? [];
+  if (mode === 'single_reaction') {
+    const likeCount = votes.filter((v) => v.reaction === 'LIKE' || v.choice === 'A').length;
+    const dislikeCount = votes.filter((v) => v.reaction === 'DISLIKE' || v.choice === 'B').length;
+    return calculateSingleReactionResult(likeCount, dislikeCount);
+  }
+
   const aCount = votes.filter((v) => v.choice === 'A').length;
   const bCount = votes.filter((v) => v.choice === 'B').length;
-
   return calculateVoteResult(aCount, bCount);
 }
 

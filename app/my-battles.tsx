@@ -31,9 +31,19 @@ function formatDateLabel(isoDate: string): string {
 }
 
 function getResultLabel(item: MyBattleListItem): string {
+  if (item.battle.mode === 'single_reaction') {
+    if (item.result.total === 0) return '아직 반응 없음';
+    if (item.result.a_count === item.result.b_count) return '동률';
+    return item.result.a_count > item.result.b_count ? '좋아요 우세' : '싫어요 우세';
+  }
+
   if (item.result.total === 0) return '아직 투표 없음';
   if (item.result.winner_choice === null) return '동률';
-  return `${item.result.winner_choice} 우세`;
+  return `${item.result.winner_choice} 선택 우세`;
+}
+
+function getModeLabel(item: MyBattleListItem): string {
+  return item.battle.mode === 'single_reaction' ? '1장 투표' : 'A/B 대결';
 }
 
 export default function MyBattlesScreen() {
@@ -76,8 +86,20 @@ export default function MyBattlesScreen() {
   async function handleShare(token: string) {
     const result = await shareLink(token);
     if (result === 'shared') {
-      Alert.alert('공유 열기 완료', '공유 시트를 열었어요.');
+      Alert.alert('공유 완료', '공유 시트를 열었어요.');
     }
+  }
+
+  function handleGoBack() {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.push('/');
+  }
+
+  function handleCreateBattle() {
+    router.push('/');
   }
 
   function renderItem({ item }: { item: MyBattleListItem }) {
@@ -87,9 +109,17 @@ export default function MyBattlesScreen() {
         activeOpacity={0.88}
         onPress={() => router.push(`/result/${item.battle.id}`)}
       >
-        <View style={styles.imagesRow}>
-          <Image source={{ uri: item.battle.image_a_url }} style={styles.thumb} contentFit="cover" />
-          <Image source={{ uri: item.battle.image_b_url }} style={styles.thumb} contentFit="cover" />
+        <View style={styles.imagesWrap}>
+          <View style={styles.modeBadge}>
+            <Text style={styles.modeBadgeText}>{getModeLabel(item)}</Text>
+          </View>
+
+          <View style={styles.imagesRow}>
+            <Image source={{ uri: item.battle.image_a_url }} style={styles.thumb} contentFit="cover" />
+            {item.battle.mode === 'duel' ? (
+              <Image source={{ uri: item.battle.image_b_url }} style={styles.thumb} contentFit="cover" />
+            ) : null}
+          </View>
         </View>
 
         <Text style={styles.cardTitle} numberOfLines={1}>
@@ -98,9 +128,9 @@ export default function MyBattlesScreen() {
 
         <View style={styles.metaRow}>
           <Text style={styles.metaText}>{formatDateLabel(item.battle.created_at)}</Text>
-          <Text style={styles.metaDot}>•</Text>
+          <Text style={styles.metaDot}>·</Text>
           <Text style={styles.metaText}>총 {item.result.total}표</Text>
-          <Text style={styles.metaDot}>•</Text>
+          <Text style={styles.metaDot}>·</Text>
           <Text style={styles.metaStrong}>{getResultLabel(item)}</Text>
         </View>
 
@@ -134,8 +164,20 @@ export default function MyBattlesScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity style={styles.backButton} activeOpacity={0.8} onPress={handleGoBack}>
+            <Text style={styles.backButtonText}>뒤로</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.createTopButton}
+            activeOpacity={0.85}
+            onPress={handleCreateBattle}
+          >
+            <Text style={styles.createTopButtonText}>+ 새 대결 만들기</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.title}>나의 대결</Text>
-        <Text style={styles.subtitle}>이 기기에서 만든 대결 결과를 모아봤어요.</Text>
+        <Text style={styles.subtitle}>이 기기에서 만든 대결 목록이에요.</Text>
       </View>
 
       <View style={styles.controlsWrap}>
@@ -153,7 +195,7 @@ export default function MyBattlesScreen() {
             onPress={() => setSortKey('votes')}
           >
             <Text style={[styles.chipText, sortKey === 'votes' ? styles.chipTextSelected : null]}>
-              투표 많은순
+              투표 많은 순
             </Text>
           </TouchableOpacity>
         </View>
@@ -179,9 +221,7 @@ export default function MyBattlesScreen() {
             style={[styles.chip, filterKey === 'pending' ? styles.chipSelected : null]}
             onPress={() => setFilterKey('pending')}
           >
-            <Text
-              style={[styles.chipText, filterKey === 'pending' ? styles.chipTextSelected : null]}
-            >
+            <Text style={[styles.chipText, filterKey === 'pending' ? styles.chipTextSelected : null]}>
               투표 없음
             </Text>
           </TouchableOpacity>
@@ -205,12 +245,12 @@ export default function MyBattlesScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>
-                {items.length === 0 ? '아직 저장된 대결이 없어요' : '조건에 맞는 대결이 없어요'}
+                {items.length === 0 ? '아직 만든 대결이 없어요' : '조건에 맞는 대결이 없어요'}
               </Text>
               <Text style={styles.emptyBody}>
                 {items.length === 0
-                  ? '홈에서 대결을 만든 뒤 다시 와서 확인해보세요.'
-                  : '정렬/필터를 바꿔서 다시 확인해보세요.'}
+                  ? '첫 대결을 만들고 결과를 확인해 보세요.'
+                  : '정렬/필터를 바꿔서 다시 확인해 보세요.'}
               </Text>
             </View>
           }
@@ -230,6 +270,38 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 10,
     gap: 4,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  backButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  backButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  createTopButton: {
+    borderRadius: 999,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  createTopButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4338CA',
   },
   title: {
     fontSize: 22,
@@ -287,7 +359,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 20,
-    gap: 6,
+    gap: 8,
   },
   emptyTitle: {
     fontSize: 16,
@@ -308,9 +380,27 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
+  imagesWrap: {
+    position: 'relative',
+  },
   imagesRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  modeBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    zIndex: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(17, 24, 39, 0.78)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  modeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFF',
   },
   thumb: {
     flex: 1,

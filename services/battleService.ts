@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { getOrCreateAnonymousUserId } from '@/services/identityService';
 import type { Battle, CreateBattleInput, PickedImage } from '@/types';
 
 function generateToken(): string {
@@ -80,32 +81,40 @@ function decodeBase64(base64: string): Uint8Array {
 }
 
 export async function createBattle(input: CreateBattleInput): Promise<Battle> {
+  const mode = input.mode ?? 'duel';
+  if (mode === 'duel' && !input.imageB) {
+    throw new Error('B image is required in duel mode.');
+  }
+
+  const creatorUserId = input.creatorUserId ?? (await getOrCreateAnonymousUserId());
   const token = generateToken();
   const timestamp = Date.now();
   const imageAType = getContentType(input.imageA);
-  const imageBType = getContentType(input.imageB);
+  const imageBType = input.imageB ? getContentType(input.imageB) : imageAType;
 
-  const [imageAUrl, imageBUrl] = await Promise.all([
-    uploadImage(
-      input.imageA,
-      'battle-images',
-      `${token}/a_${timestamp}.${getFileExtension(imageAType)}`
-    ),
-    uploadImage(
-      input.imageB,
-      'battle-images',
-      `${token}/b_${timestamp}.${getFileExtension(imageBType)}`
-    ),
-  ]);
+  const imageAUrl = await uploadImage(
+    input.imageA,
+    'battle-images',
+    `${token}/a_${timestamp}.${getFileExtension(imageAType)}`
+  );
+  const imageBUrl =
+    mode === 'duel' && input.imageB
+      ? await uploadImage(
+          input.imageB,
+          'battle-images',
+          `${token}/b_${timestamp}.${getFileExtension(imageBType)}`
+        )
+      : imageAUrl;
 
   const { data, error } = await supabase
     .from('battles')
     .insert({
-      creator_user_id: input.creatorUserId ?? null,
+      creator_user_id: creatorUserId,
       title: input.title ?? null,
       invite_token: token,
       image_a_url: imageAUrl,
       image_b_url: imageBUrl,
+      mode,
       is_active: true,
     })
     .select()
